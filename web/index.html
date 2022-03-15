@@ -1,0 +1,163 @@
+<html>
+  <head>
+    <link rel="stylesheet" href="layui/css/layui.css" media="all">
+    <style>
+      body{
+        /*user-select: none;*/
+      }
+    </style>
+    <script src="dash.all.min.js"></script>
+    <script src="layui/layui.js" charset="utf-8"></script>
+    <script>
+      async function prepareMpd(url) {
+        const info = await fetch(url)
+          .then( r => r.text() )
+          .then( r => JSON.parse(r.match(/<script>window.__playinfo__=([^<]+)<\/script>/)[1]))
+        const dash = info.data.dash;
+        setMusicUrl(dash.audio[0].baseUrl);
+        const mpd = 
+`<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xlink="http://www.w3.org/1999/xlink" xsi:schemaLocation="urn:mpeg:dash:schema:mpd:2011 DASH-MPD.xsd" xmlns:cenc="urn:mpeg:cenc:2013" minBufferTime="PT2S" type="static" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" mediaPresentationDuration="PT${dash.duration-1}S">
+  <Period>
+    <AdaptationSet id="0" contentType="audio" lang="en">
+      <Representation id="0" bandwidth="${dash.audio[0].bandwidth}" codecs="${dash.audio[0].codecs}" mimeType="${dash.audio[0].mimeType}">
+        <BaseURL>lplayer://xxx.m4s</BaseURL>
+        <SegmentBase indexRange="${dash.audio[0].SegmentBase.indexRange}">
+          <Initialization range="${dash.audio[0].SegmentBase.Initialization}"/>
+        </SegmentBase>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>`
+        return URL.createObjectURL(new Blob([mpd],{type: 'text/plain'}));
+      }
+
+      function onPlayClick(bv){
+        let url;
+        if(bv){
+          url = 'https://www.bilibili.com/video/' + bv;
+        } else {
+          url = document.getElementById('url').value;
+        }
+        const show = document.getElementById('bvshow');
+        show.innerText = url.match(/(BV[^\?$]+)/)[1];
+        prepareMpd(url)
+          .then( mpd => player.attachSource(mpd));
+      }
+
+      const list = playList.readAll();
+      let nextList = list;
+
+      function switchPlaylist(){
+        const ele = document.getElementById('mode')
+        const modeMap = {
+          '列表循环': '列表随机',
+          '列表随机': '单曲循环',
+          '单曲循环': '列表循环'
+        }
+
+        ele.innerText = modeMap[ele.innerText];
+
+        switch(ele.innerText){
+          case '列表循环': {
+            nextList = list;
+            break;
+          }
+          case '列表随机': {
+            const tmp = [...list];
+            nextList = [];
+            while(tmp.length > 0){
+              nextList.push(tmp.splice(Math.random() * tmp.length | 0, 1)[0]);
+            }
+            break;
+          }
+          case '单曲循环': {
+            nextList = [];
+            break;
+          }
+        }
+      }
+      
+    </script>
+    <title>L</title>
+  </head>
+    
+  <body>
+    <a>当前播放:</a><a id="bvshow"></a>
+    <audio id="audioPlayer" crossorigin="anonymous" controls></audio>
+    <br>
+    <input class="layui-input" id="url"/>
+    <button class="layui-btn" onclick="onPlayClick();">播放</button>
+    <button class="layui-btn" onclick="addToPlaylist();">保存</button>
+    <button id="mode" class="layui-btn" onclick="switchPlaylist();">列表循环</button>
+    <button class="layui-btn" onclick="window.close();">退出</button>
+    <br>
+    <table class="layui-hide" id="playlist"></table>
+    <script>
+      const audioEle = document.querySelector("#audioPlayer");
+
+      const player = dashjs.MediaPlayer().create();
+      player.initialize(audioEle, null, true);
+
+      audioEle.onended = () => {
+        const nowBV = document.getElementById('bvshow').innerText;
+
+        if(nextList.length === 0) {
+          audioEle.currentTime = 0;
+          setTimeout(() => audioEle.play());
+          return;
+        };
+
+        let index = nextList.findIndex(d => d.bv === nowBV);
+
+        if(index === -1){
+          index = 0;
+        } else {
+          index = (index + 1) % nextList.length;
+        }
+
+        onPlayClick(nextList[index].bv);
+      }
+
+      let tableIns;
+      layui.use('table', function(){
+        const table = layui.table;
+        
+        tableIns = table.render({
+          elem: '#playlist',
+          cellMinWidth: 80,
+          data: list,
+          page: true,
+          cols: [[
+            {field:'bv', width:130, title: 'BV号'},
+            {field:'title', title: '标题'},
+            {field:'title',width: 130, title: '操作', templet: d => `<button class="layui-btn layui-btn-xs" onclick="onPlayClick('${d.bv}');">播放</button><button class="layui-btn layui-btn-xs" onclick="deleteBV('${d.bv}');">删除</button>`},
+          ]]
+        });
+      });
+
+      function addToPlaylist(){
+        const url = document.getElementById('url').value;
+        fetch(url)
+          .then( r => r.text() )
+          .then( r => {
+            const info = JSON.parse(
+              r.match(/<script>window.__INITIAL_STATE__=([^<]+)<\/script>/)[1]
+                .replace(';(function(){var s;(s=document.currentScript||document.scripts[document.scripts.length-1]).parentNode.removeChild(s);}());','')
+            );
+            if(list.findIndex(d => d.bv === info.videoData.bvid) > -1) return;
+            list.push({bv: info.videoData.bvid, title: info.videoData.title, pic: info.videoData.pic});
+            playList.writeAll(list);
+            tableIns.reload();
+          })
+          
+      }
+
+      function deleteBV(bv){
+        list.splice(list.findIndex(d => d.bv === bv),1);
+        playList.writeAll(list);
+        tableIns.reload();
+      }
+    </script>
+  </body>
+</html>
